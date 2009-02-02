@@ -36,6 +36,7 @@ class SettingsUpdater(object):
             raise SettingsError('Invalid settings: no nodes')
         self.filename = filename
         self.root = tree
+        self.was_changed = False
 
     def update(self, new_settings={}, append_settings={},
             create_if_missing=False):
@@ -65,9 +66,10 @@ class SettingsUpdater(object):
                     raise SettingsError("'%s' missing from settings" % name)
             else:
                 append_to_node(node_dict[name], value)
+        self.was_changed = True
 
     def save(self, filename=None):
-        if filename is None and not self.root.was_changed:
+        if filename is None and not self.was_changed:
             return False
 
         if filename is None:
