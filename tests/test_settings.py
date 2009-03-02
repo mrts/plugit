@@ -5,14 +5,14 @@ import os, sys
 from nose.tools import assert_raises
 from lib2to3.pgen2.parse import ParseError
 
-from plugit.settingshandler import SettingsUpdater
+from plugit.settingshandler import SettingsFileUpdater
 
 TESTDATADIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
 def test_parse():
-    nonexisting = lambda: SettingsUpdater(
+    nonexisting = lambda: SettingsFileUpdater(
             os.path.join(TESTDATADIR, "n o n e x i s t i n g"))
-    unparseable = lambda: SettingsUpdater(
+    unparseable = lambda: SettingsFileUpdater(
             os.path.join(TESTDATADIR, 'invalid.txt'))
     assert_raises(IOError, nonexisting)
     assert_raises(ParseError, unparseable)
@@ -33,7 +33,7 @@ def test_update_settings():
             'EMPTY_DICT' : {'quia': True, 'dolor': {'sit': 'amet'}},
             }
 
-    updater = SettingsUpdater(os.path.join(TESTDATADIR,
+    updater = SettingsFileUpdater(os.path.join(TESTDATADIR,
         'testsettings.py'))
     updater.update(new_settings, append_settings)
     updater.save(os.path.join(TESTDATADIR, 'tmpsettings.py'))

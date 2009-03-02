@@ -1,6 +1,13 @@
-#
-# Based on lib2to3/tests/*
-#
+"""
+Adds or updates ``varname = value`` assignment statements in either files or
+strings that contain valid Python syntax.
+
+The intended use is from applications that need to update settings files
+automatically.
+
+Based on lib2to3 tests. Some insight of lib2to3 workings came from Pythoscope
+source.
+"""
 
 from __future__ import with_statement
 
@@ -10,8 +17,9 @@ from lib2to3.pygram import python_symbols as symbols
 from lib2to3.pgen2 import token
 from lib2to3.pytree import Node, Leaf
 
-class SettingsError(RuntimeError):
-    pass
+from plugit.exceptions import SettingsError
+
+# node factories
 
 Newline = lambda: Leaf(token.NEWLINE, "\n")
 Comma = lambda: Leaf(token.COMMA, ',')
@@ -23,67 +31,109 @@ AssignStatement = lambda name, value: Node(symbols.expr_stmt,
          Value(value, prefix=' '),
          Newline()])
 
-class SettingsUpdater(object):
+
+class SettingsStringUpdater(object):
     """
-    Class for updating a Python source file that contains settings.
-    Settings file should contain global uppercase names with assign
-    statements.
+    Base class that implements node tree parsing and updating.
+    Handles strings.
     """
-    def __init__(self, filename):
+    def __init__(self, source):
+        """
+        Parses `source` to a node tree.
+
+        :param source: a string with Python source
+        """
         drv = driver.Driver(pygram.python_grammar, pytree.convert)
-        tree = drv.parse_file(filename, True)
+        tree = self._parse_func(drv)(source)
         if not isinstance(tree, Node):
             raise SettingsError('Invalid settings: no nodes')
-        self.filename = filename
         self.root = tree
-        self.was_changed = False
+        self.changed = False
+
+    @property
+    def result(self):
+        return str(self.root)
 
     def update(self, new_settings={}, append_settings={},
             create_if_missing=False):
         """
-        Updates the settings. Either of the arguments is optional. The
-        arguments have to be dictionaries with configuration variable
-        name/value pairs. The names should be uppercase strings.
+        Updates the settings. Either of the arguments is optional, but at
+        least one should be present. The arguments have to be dictionaries
+        with configuration variable name/value pairs. The names should be
+        uppercase strings (this is not enforced though).
 
         :param new_settings: a dictionary with new settings, will create new
-            statemens in the form NAME = repr(value)
+            statemens in the form ``NAME = repr(value)``
         :param append_settings: a dictionary of values to add to existing
             configuration variables, whose names are given in keys
         :param create_if_missing: if any configuration variable given in
             `append_settings` is missing, create it, otherwise throw
         """
         node_names = new_settings.keys() + append_settings.keys()
-        node_dict = find_nodes(self.root, node_names)
+        node_dict = find_assignment_nodes(self.root, node_names)
         for name, value in new_settings.iteritems():
             if name in node_dict:
-                raise SettingsError("'%s' already present in settings" % name)
+                raise SettingsError("Variable '%s' already present in settings"
+                        % name)
             self.root.append_child(AssignStatement(name, value))
+            self.changed = True
         for name, value in append_settings.iteritems():
             if name not in node_dict:
                 if create_if_missing:
                     self.root.append_child(AssignStatement(name, value))
+                    self.changed = True
                 else:
-                    raise SettingsError("'%s' missing from settings" % name)
+                    raise SettingsError("Variable '%s' missing from settings"
+                            % name)
             else:
-                append_to_node(node_dict[name], value)
-        self.was_changed = True
+                append_to_assignment_node(node_dict[name], value)
+                self.changed = True
+
+    def _parse_func(self, drv):
+        return drv.parse_string
+
+
+class SettingsFileUpdater(SettingsStringUpdater):
+    """
+    Handles settings files.
+    """
+    def __init__(self, filename):
+        """
+        Parses the contents of `filename` to a node tree.
+
+        :param filename: a file with Python source
+        """
+        super(SettingsFileUpdater, self).__init__(filename)
+        self.filename = filename
 
     def save(self, filename=None):
-        if filename is None and not self.was_changed:
+        """
+        Saves the modified settings back to either the original file
+        or a new file. If the node tree is unmodified and no new file name
+        given, takes no action.
+
+        :param filename: the new file name to save the modified settings to
+        """
+        if filename is None and not self.changed:
             return False
 
         if filename is None:
             filename = self.filename
         with open(filename, 'w') as f:
-            f.write(str(self.root))
+            f.write(self.result)
         return True
 
-def find_nodes(tree, names):
-    """
-    Find assignment statements matching any name in names in node tree.
+    def _parse_func(self, drv):
+        return drv.parse_file
 
-    :param names: the variable names to find
-    :param tree: node tree
+
+def find_assignment_nodes(tree, names):
+    """
+    Find assignment statements matching any variable name in `names` in node
+    tree `tree`.
+
+    :param names: the list of variable names to find
+    :param tree: the node tree
     :return: a dictionary with name/node mapping
     """
     name_patterns = [(pytree.LeafPattern(token.NAME, name),) for name in names]
@@ -99,15 +149,17 @@ def find_nodes(tree, names):
             result[m['match'].children[0].value] = m['match']
     return result
 
-def append_to_node(node, value):
+
+def append_to_assignment_node(node, value):
     """
-    Append `value` to `node`. If `node` is a dict node, `value` has to be a
-    dict as well. The dict node will be updated with key/value pairs from
-    `value` in this case.
+    Append `value` to `node` that contains an assignment statement. If
+    `node` is a dict node, `value` has to be a dict as well. The dict node
+    will be updated with key/value pairs from `value` in this case.
 
     :param node: the node to be updated
     :param value: the value to be appended to `node`
     """
+
     assert node.type == symbols.expr_stmt
     atom = node.children[2]
     if atom.type != symbols.atom:
@@ -129,6 +181,7 @@ def append_to_node(node, value):
     else:
         _append_to_leaf_expression(atom, value,
                 node.children[0].value)
+
 
 def _append_to_node_expression(container, value, setting):
     if not container.type in (symbols.testlist_gexp, symbols.listmaker,
@@ -175,9 +228,7 @@ def _append_to_dict(node, value, prefix, setting):
         node.append_child(Comma())
 
 def _find_whitespace(l):
-    """
-    Discover whitespace used in container definition.
-    """
+    """ Discover whitespace used in container definition. """
     l = l.get_prev_sibling()
     ret = ''
     while l and l.type != token.COMMA:
