@@ -164,7 +164,7 @@ def append_to_assignment_node(node, value):
     atom = node.children[2]
     if atom.type != symbols.atom:
         raise SettingsError("Not a container definition (expression's third "
-                "node is not an atom): %s\n Can append only to containers "
+                "node is not an atom): %s\nCan append only to containers "
                 "(dicts or lists)" % str(node))
     # atom can be any of the following:
     # 1. empty
